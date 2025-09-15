@@ -318,7 +318,7 @@
   });
 
   /* ===== 대회 목록 ===== */
-  let TOUR_MAP={}, currentTour=null;
+  let TOUR_MAP={}, currentTour=null, selectedTourId=null;
   async function loadTournaments(){
     const res=await fetch(`${WEB_APP_URL}?path=tournaments`);
     const json=await res.json();
@@ -376,18 +376,32 @@
     return variants;
   }
 
+  let lastPosterId=null;
   async function renderPosterStrict(tourId){
     const wrap=$('#posterWrap'), img=$('#posterImg');
-    wrap.style.display='none'; img.removeAttribute('src'); img.onerror=null; img.onload=null;
-    if(!tourId) return;
-    const t = TOUR_MAP[tourId]; if(!t) return;
+    const id=tourId||'';
+    const same=id===lastPosterId && img.dataset.loaded==='1';
+    if(same) return;
+    lastPosterId=id;
+
+    wrap.style.display='none';
+    img.removeAttribute('src');
+    img.onerror=null;
+    img.onload=null;
+    delete img.dataset.loaded;
+
+    if(!id) return;
+    const t = TOUR_MAP[id]; if(!t) return;
 
     const urls = computePosterVariants(t.posterUrl, t.posterId);
     if(!urls.length) return;
 
     let idx=0;
-    const tryNext=()=>{ if(idx>=urls.length){ wrap.style.display='none'; img.removeAttribute('src'); return; } img.src = urls[idx++]; };
-    img.onload = ()=>{ wrap.style.display='block'; };
+    const tryNext=()=>{
+      if(idx>=urls.length){ wrap.style.display='none'; img.removeAttribute('src'); return; }
+      img.src = urls[idx++];
+    };
+    img.onload = ()=>{ img.dataset.loaded='1'; wrap.style.display='block'; };
     img.onerror= tryNext;
     tryNext();
   }
@@ -407,11 +421,26 @@
     if(nextbar) nextbar.style.display='flex';
   }
 
-  $('#tourSelect').addEventListener('change',async e=>{
-    const id=e.target.value; currentTour=id?TOUR_MAP[id]:null;
+  async function applyTourSelection(tourId,{updateSelect=true,force=false}={}){
+    const id=tourId||'';
+    if(updateSelect) $('#tourSelect').value=id;
+
+    const sameId = id===selectedTourId;
+    if(!force && sameId){
+      renderTourInfo(currentTour);
+      return currentTour;
+    }
+
+    selectedTourId=id;
+    currentTour=id?TOUR_MAP[id]:null;
     renderTourInfo(currentTour);
-    await renderPosterStrict(id||'');
+    await renderPosterStrict(id);
     fillCategoriesFromTour(currentTour);
+    return currentTour;
+  }
+
+  $('#tourSelect').addEventListener('change',e=>{
+    applyTourSelection(e.target.value,{updateSelect:false});
   });
 
   /* ===== 종별/디비전 제한 ===== */
@@ -468,9 +497,35 @@
   syncColor({hexId:'#uniformHome', pickerId:'#uniformHomePicker', jerseyId:'#jerseyHome', confirmId:'#uniformHomeConfirm'});
   syncColor({hexId:'#uniformAway', pickerId:'#uniformAwayPicker', jerseyId:'#jerseyAway', confirmId:'#uniformAwayConfirm'});
 
+  function setUniformColors(home, away){
+    const applyColor=(value,{hex,picker,jersey,confirm,fallback})=>{
+      const hexValue=/^#[0-9A-Fa-f]{6}$/.test(value||'')?value:fallback;
+      const hexInput=$(hex), pickerInput=$(picker), jerseySvg=$(jersey), confirmBtn=$(confirm);
+      hexInput.value=hexValue;
+      pickerInput.value=hexValue;
+      renderJersey(jerseySvg, hexValue);
+      if(confirmBtn) confirmBtn.style.display='none';
+      return hexValue;
+    };
+    const colors=[
+      applyColor(home,{hex:'#uniformHome',picker:'#uniformHomePicker',jersey:'#jerseyHome',confirm:'#uniformHomeConfirm',fallback:'#ff0000'}),
+      applyColor(away,{hex:'#uniformAway',picker:'#uniformAwayPicker',jersey:'#jerseyAway',confirm:'#uniformAwayConfirm',fallback:'#ffffff'})
+    ];
+    checkContrast();
+    return {home:colors[0],away:colors[1]};
+  }
+
   /* ===== 연락처/지역 ===== */
-  $('#ownerPhone').addEventListener('input',e=> e.target.value=(e.target.value||'').replace(/\D+/g,'').slice(0,11));
-  $('#managerPhone').addEventListener('input',e=> e.target.value=(e.target.value||'').replace(/\D+/g,'').slice(0,11));
+  function enforceDigitInput(selector, max=11){
+    const el=$(selector);
+    if(!el) return;
+    el.addEventListener('input',e=>{
+      const onlyDigits=(e.target.value||'').replace(/\D+/g,'');
+      e.target.value=onlyDigits.slice(0,max);
+    });
+  }
+  enforceDigitInput('#ownerPhone');
+  enforceDigitInput('#managerPhone');
   const regionMap={'서울특별시':['강남구','강동구','강북구','강서구','관악구','광진구','구로구','금천구','노원구','도봉구','동대문구','동작구','마포구','서대문구','서초구','성동구','성북구','송파구','양천구','영등포구','용산구','은평구','종로구','중구','중랑구'],
   '부산광역시':['강서구','금정구','남구','동구','동래구','부산진구','북구','사상구','사하구','서구','수영구','연제구','영도구','중구','해운대구','기장군'],
   '대구광역시':['남구','달서구','동구','북구','서구','수성구','중구','달성군','군위군'],
@@ -494,6 +549,29 @@
     else{ citySel.disabled=false; citySel.appendChild(new Option('선택','')); (regionMap[prov]||[]).forEach(c=>citySel.appendChild(new Option(c,c))); }
   });
 
+  function setProvinceCity(province, city){
+    const provinceSel=$('#province'), citySel=$('#city');
+    provinceSel.value=province||'';
+    provinceSel.dispatchEvent(new Event('change'));
+    citySel.value=city||'';
+  }
+
+  function setCategoryDivision(category, division){
+    const cat=category||'';
+    categorySelect.value=cat;
+    categorySelect.dispatchEvent(new Event('change'));
+    if(!cat){
+      divisionSelect.value='';
+      return;
+    }
+    if(division){
+      const option=Array.from(divisionSelect.options).find(opt=>opt.value===division);
+      divisionSelect.value=option?division:'';
+    }else{
+      divisionSelect.value='';
+    }
+  }
+
   /* ===== 선수 카드 & 붙여넣기 ===== */
   function createPlayerCard(){
     const div=document.createElement('div');
@@ -513,8 +591,46 @@
     return div;
   }
   const playersDiv=$('#players');
+  function ensurePlayerCards(min=5){
+    while(playersDiv.children.length<min){
+      playersDiv.appendChild(createPlayerCard());
+    }
+  }
+  function populatePlayers(list){
+    playersDiv.innerHTML='';
+    (list||[]).forEach(pl=>{
+      const card=createPlayerCard();
+      const getVal=(...keys)=>{
+        for(const key of keys){
+          const value=pl?.[key];
+          if(value!==undefined && value!==null) return value;
+        }
+        return '';
+      };
+      card.querySelector('[data-key="name"]').value=getVal('name','선수이름');
+      card.querySelector('[data-key="number"]').value=getVal('number','등번호');
+      card.querySelector('[data-key="position"]').value=(getVal('position','포지션')||'').toUpperCase();
+      card.querySelector('[data-key="birth"]').value=getVal('birth','생년월일');
+      card.querySelector('[data-key="elite"]').value=getVal('elite','선출여부');
+      playersDiv.appendChild(card);
+    });
+    if(!list || !list.length) ensurePlayerCards(5);
+  }
   $('#addPlayerBtn').addEventListener('click',()=>playersDiv.appendChild(createPlayerCard()));
-  for(let i=0;i<5;i++) $('#addPlayerBtn').click();
+  ensurePlayerCards(5);
+
+  async function populateTeamForm(teamData, playerList){
+    const team=teamData||{};
+    await applyTourSelection(team.tourId||'', {force:true});
+    setProvinceCity(team.province||'', team.city||'');
+    $('#teamNameKo').value=team.teamNameKo||'';
+    $('#teamNameEn').value=team.teamNameEn||'';
+    $('#managerName').value=team.managerName||'';
+    $('#managerPhone').value=String(team.managerPhone||'').replace(/\D/g,'');
+    setCategoryDivision(team.category||'', team.division||'');
+    setUniformColors(team.uniformHome||'#ff0000', team.uniformAway||'#ffffff');
+    populatePlayers(playerList||[]);
+  }
 
   $('#togglePasteBtn').addEventListener('click', ()=>{ const p=$('#pastePanel'); p.style.display=p.style.display==='none'?'block':'none'; });
   $('#pasteClearBtn')?.addEventListener('click', ()=> $('#pasteText').value='' );
@@ -597,17 +713,7 @@
       const json=await (await fetch(url)).json();
       if(!json.ok){ alert('오류: '+(json.error||'fail')); return; }
       ownerEdit={teamId,name,phone};
-      const t=json.team||{}, pls=json.players||[];
-      if (t.tourId && TOUR_MAP[t.tourId]) { $('#tourSelect').value = t.tourId; currentTour = TOUR_MAP[t.tourId]; renderTourInfo(currentTour); await renderPosterStrict(t.tourId); fillCategoriesFromTour(currentTour); }
-      $('#province').value = t.province || ''; $('#province').dispatchEvent(new Event('change')); setTimeout(()=>{ $('#city').value = t.city || ''; }, 0);
-      $('#teamNameKo').value = t.teamNameKo || ''; $('#teamNameEn').value = t.teamNameEn || '';
-      $('#managerName').value = t.managerName || ''; $('#managerPhone').value = String(t.managerPhone||'').replace(/\D/g,'');
-      if (t.category){ $('#category').value = t.category; $('#category').dispatchEvent(new Event('change')); setTimeout(()=>{ if(t.division) $('#division').value = t.division; }, 0); }
-      $('#uniformHome').value = t.uniformHome || '#ff0000'; $('#uniformAway').value = t.uniformAway || '#ffffff';
-      $('#uniformHomePicker').value = $('#uniformHome').value; $('#uniformAwayPicker').value = $('#uniformAway').value;
-      renderJersey($('#jerseyHome'), $('#uniformHome').value); renderJersey($('#jerseyAway'), $('#uniformAway').value); checkContrast();
-
-      playersDiv.innerHTML=''; (pls||[]).forEach(pl=>{ const c=createPlayerCard(); c.querySelector('[data-key="name"]').value=pl.name||pl['선수이름']||''; c.querySelector('[data-key="number"]').value=pl.number||pl['등번호']||''; c.querySelector('[data-key="position"]').value=(pl.position||pl['포지션']||'').toUpperCase(); c.querySelector('[data-key="birth"]').value=pl.birth||pl['생년월일']||''; c.querySelector('[data-key="elite"]').value=pl.elite||pl['선출여부']||''; playersDiv.appendChild(c); });
+      await populateTeamForm(json.team||{}, json.players||[]);
       show('신청서가 불러와졌습니다. 수정 후 제출하세요.');
       $$('.step').forEach(s=>s.classList.remove('active')); $('#step1').classList.add('active'); window.scrollTo({top:0,behavior:'smooth'});
     }catch(e){ alert('네트워크 오류'); }
@@ -688,26 +794,14 @@
   /* ===== 부트스트랩 ===== */
   (async function init(){
     await loadTournaments();
-    const initialId = $('#tourSelect').value || '';
-    const initialTour = initialId ? TOUR_MAP[initialId] : null;
-    renderTourInfo(initialTour);
-    if (initialId) await renderPosterStrict(initialId);
+    await applyTourSelection($('#tourSelect').value || '', {updateSelect:false});
 
     // 링크 수정 모드: 기존값 미리 불러오기
     if (editTeamId && editCode){
       try{
         const j=await (await fetch(`${WEB_APP_URL}?path=getTeam&teamId=${encodeURIComponent(editTeamId)}&code=${encodeURIComponent(editCode)}`)).json();
         if(j.ok){
-          const t=j.team||{}, pls=j.players||[];
-          if (t.tourId && TOUR_MAP[t.tourId]) { $('#tourSelect').value=t.tourId; currentTour=TOUR_MAP[t.tourId]; renderTourInfo(currentTour); await renderPosterStrict(t.tourId); fillCategoriesFromTour(currentTour); }
-          $('#province').value=t.province||''; $('#province').dispatchEvent(new Event('change')); setTimeout(()=>{ $('#city').value=t.city||''; },0);
-          $('#teamNameKo').value=t.teamNameKo||''; $('#teamNameEn').value=t.teamNameEn||'';
-          $('#managerName').value=t.managerName||''; $('#managerPhone').value=String(t.managerPhone||'').replace(/\D/g,'');
-          if(t.category){ $('#category').value=t.category; $('#category').dispatchEvent(new Event('change')); setTimeout(()=>{ if(t.division) $('#division').value=t.division; },0); }
-          $('#uniformHome').value=t.uniformHome||'#ff0000'; $('#uniformAway').value=t.uniformAway||'#ffffff';
-          $('#uniformHomePicker').value=$('#uniformHome').value; $('#uniformAwayPicker').value=$('#uniformAway').value;
-          renderJersey($('#jerseyHome'), $('#uniformHome').value); renderJersey($('#jerseyAway'), $('#uniformAway').value); checkContrast();
-          playersDiv.innerHTML=''; (pls||[]).forEach(pl=>{ const c=createPlayerCard(); c.querySelector('[data-key="name"]').value=pl.name||''; c.querySelector('[data-key="number"]').value=pl.number||''; c.querySelector('[data-key="position"]').value=(pl.position||'').toUpperCase(); c.querySelector('[data-key="birth"]').value=pl.birth||''; c.querySelector('[data-key="elite"]').value=pl.elite||''; playersDiv.appendChild(c); });
+          await populateTeamForm(j.team||{}, j.players||[]);
           show('수정 링크로 불러온 신청서입니다.');
         }
       }catch(e){}
