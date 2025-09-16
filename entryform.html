@@ -748,10 +748,9 @@
     const name=$('#ownerName').value.trim(); const phone=($('#ownerPhone').value||'').replace(/\D/g,'');
     if(!name || phone.length<8){ show('이름과 연락처(숫자만)를 입력하세요'); return; }
     try{
-      const res=await fetch(`${WEB_APP_URL}?path=findteam&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`);
-      const json=await res.json();
-      if(!json.ok){ alert('오류: '+(json.error||'fail')); return; }
-      const list=json.items||[]; if(list.length===0){ show('일치하는 신청서가 없습니다.'); $('#ownerResult').style.display='none'; return; }
+      const json=await postWithFallback(['findteam','findTeam'], {name,phone});
+      if(json && json.ok===false){ alert('오류: '+(json.error||'fail')); return; }
+      const list=json.items||json.rows||[]; if(!Array.isArray(list) || list.length===0){ show('일치하는 신청서가 없습니다.'); $('#ownerResult').style.display='none'; return; }
       const sel=$('#ownerTeamSel'); sel.innerHTML='';
       list.forEach(it=>{
         const txt=`${it.teamNameKo||'(팀명없음)'} / ${it.tourName||'-'} ${it.category?(' / '+it.category):''}${it.division?(' '+it.division):''}`;
