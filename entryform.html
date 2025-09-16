@@ -70,7 +70,8 @@
     <div class="step active" id="step0">
       <div class="section-title">0) 참가희망 대회</div>
       <label>대회 선택</label>
-      <select id="tourSelect"><option value="">대회를 선택하세요</option></select>
+            <select id="tourSelect"><option value="">대회를 선택하세요</option></select>
+      <div id="tourLoading" class="muted" style="display:none" aria-live="polite">대회 목록 불러오는 중…</div>
 
       <!-- ▶ 포스터 -->
       <div id="posterWrap" class="poster-wrap" aria-live="polite">
@@ -319,19 +320,74 @@
 
   /* ===== 대회 목록 ===== */
   let TOUR_MAP={}, currentTour=null, selectedTourId=null;
-  async function loadTournaments(){
-    const res=await fetch(`${WEB_APP_URL}?path=tournaments`);
-    const json=await res.json();
-    if(!json.ok) return;
-    const sel=$('#tourSelect'); sel.innerHTML='<option value="">대회를 선택하세요</option>';
-    (json.rows||[]).forEach(t=>{
-      TOUR_MAP[t.TourID||t.tourId]=t;
+  const TOUR_CACHE_KEY='tournamentsCache';
+  const TOUR_CACHE_TTL=1000*60*5; // 5분
+
+  function populateTournamentOptions(rows){
+    const sel=$('#tourSelect'); if(!sel) return;
+    const prevValue=sel.value;
+    TOUR_MAP={};
+    sel.innerHTML='<option value="">대회를 선택하세요</option>';
+    (Array.isArray(rows)?rows:[]).forEach(t=>{
+      const id=t.TourID||t.tourId; if(!id) return;
+      TOUR_MAP[id]=t;
       const opt=document.createElement('option');
-      opt.value=t.TourID||t.tourId;
+      opt.value=id;
       const period=(t.start||t.end)?` · ${fmtDate(t.start)}~${fmtDate(t.end)}`:'';
       opt.textContent=`${t.name}${t.status?' ('+t.status+')':''}${period}`;
       sel.appendChild(opt);
     });
+        if(prevValue && TOUR_MAP[prevValue]) sel.value=prevValue;
+  }
+
+  async function loadTournaments(){
+    const loadingEl=$('#tourLoading');
+    const showLoading=()=>{ if(loadingEl){ loadingEl.textContent='대회 목록 불러오는 중…'; loadingEl.style.display='block'; } };
+    const hideLoading=()=>{ if(loadingEl) loadingEl.style.display='none'; };
+    const showError=msg=>{ if(loadingEl){ loadingEl.textContent=msg; loadingEl.style.display='block'; } };
+    const clearCache=()=>{ try{ localStorage.removeItem(TOUR_CACHE_KEY); }catch(_){} };
+
+    let usedCache=false;
+    try{
+      const raw=localStorage.getItem(TOUR_CACHE_KEY);
+      if(raw){
+        const cache=JSON.parse(raw);
+        const rows=Array.isArray(cache?.rows)?cache.rows:null;
+        const ts=typeof cache?.timestamp==='number'?cache.timestamp:0;
+        if(rows && ts && (Date.now()-ts)<TOUR_CACHE_TTL){
+          populateTournamentOptions(rows);
+          usedCache=true;
+        }else{
+          clearCache();
+        }
+      }
+    }catch(err){
+      console.warn('대회 목록 캐시를 불러오지 못했습니다.', err);
+      clearCache();
+    }
+
+    if(!usedCache) showLoading();
+
+    let fetchFailed=false;
+    try{
+      const res=await fetch(`${WEB_APP_URL}?path=tournaments`);
+      const json=await res.json();
+      if(json.ok){
+        const rows=json.rows||[];
+        populateTournamentOptions(rows);
+        try{ localStorage.setItem(TOUR_CACHE_KEY, JSON.stringify({timestamp:Date.now(), rows})); }
+        catch(err){ console.warn('대회 목록 캐시 저장에 실패했습니다.', err); }
+      }else{
+        fetchFailed=true;
+        if(!usedCache) showError('대회 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
+    }catch(err){
+      fetchFailed=true;
+      console.error('대회 목록을 불러오지 못했습니다.', err);
+      if(!usedCache) showError('대회 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }finally{
+      if(!fetchFailed || usedCache) hideLoading();
+    }
   }
   const pad2=n=>String(n).padStart(2,'0');
   const fmtDate=v=>{ if(!v) return ''; const d=new Date(v); if(isNaN(d)) return v; return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`; };
@@ -793,8 +849,10 @@
 
   /* ===== 부트스트랩 ===== */
   (async function init(){
-    await loadTournaments();
-    await applyTourSelection($('#tourSelect').value || '', {updateSelect:false});
+    const initialLoad=loadTournaments()
+      .then(()=> applyTourSelection($('#tourSelect').value || '', {updateSelect:false}))
+      .catch(err=>{ console.error('초기 대회 목록을 불러오는 중 오류가 발생했습니다.', err); });
+    await initialLoad;
 
     // 링크 수정 모드: 기존값 미리 불러오기
     if (editTeamId && editCode){
