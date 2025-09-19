@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>BDR 참가신청서 v2.0 beta</title>
+<title>BDR 참가신청서 v2.22 beta</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -73,7 +73,7 @@
         <button class="btn-sm" id="formSettingsBtn" type="button" title="Web App URL 설정">⚙️</button>
       </div>
     </div>
-    <h1>BDR 참가신청서 v2.0 beta</h1>
+    <h1>BDR 참가신청서 v2.22 beta</h1>
     <div class="muted">참가 대회 선택 ➜ 팀 대표 정보 ➜ 선수 명단 ➜ 제출</div>
 
     <!-- 0) 대회 선택 -->
@@ -787,11 +787,35 @@
     show('새 대회로 불러왔습니다. ② 종별/디비전을 다시 선택해 주세요.');
   });
 
+  /* ===== (추가) 배경→글자색 자동 산출 유틸 ===== */
+  function _hexToRgbArr(hex){
+    let h=(hex||'').trim(); if(!h) return [0,0,0];
+    if(h[0]==='#') h=h.slice(1);
+    if(h.length===3) h=h.split('').map(c=>c+c).join('');
+    const n=parseInt(h,16); return [(n>>16)&255,(n>>8)&255,n&255];
+  }
+  function _srgbToLinear(v){ v/=255; return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4); }
+  function _relLuminance(hex){
+    const [r,g,b]=_hexToRgbArr(hex);
+    const R=_srgbToLinear(r), G=_srgbToLinear(g), B=_srgbToLinear(b);
+    return 0.2126*R + 0.7152*G + 0.0722*B;
+  }
+  function autoTextColor(bgHex){
+    // 임계값 0.5 (어두우면 흰색). 필요 시 0.45~0.55 사이로 조절 가능.
+    return _relLuminance(bgHex) < 0.5 ? '#ffffff' : '#111111';
+  }
+
   /* ===== 제출(신규/수정 공용) ===== */
   $('#submitBtn').addEventListener('click', async ()=>{
     if (!validateStep('step0') || !validateStep('step1') || !validateStep('step2')) return;
 
     const province=$('#province').value.trim(), city=$('#city').value.trim();
+
+    // (추가) 제출 직전, 배경색 → 글자색 자동 계산
+    const homeBg = ($('#uniformHome').value||'').trim();
+    const awayBg = ($('#uniformAway').value||'').trim();
+    const homeTxt = autoTextColor(homeBg);
+    const awayTxt = autoTextColor(awayBg);
 
     const team={
       tourId: $('#tourSelect').value.trim(),
@@ -804,8 +828,12 @@
       managerPhone: ($('#managerPhone').value||'').replace(/\D+/g,''),
       category: $('#category').value,
       division: $('#division').value,
-      uniformHome: $('#uniformHome').value.trim(),
-      uniformAway: $('#uniformAway').value.trim()
+      uniformHome: homeBg,
+      uniformAway: awayBg,
+
+      // (추가 저장) 배경 대비 자동 글자색
+      uniformHomeTextColor: homeTxt,
+      uniformAwayTextColor: awayTxt
     };
 
     const players=$$('.player-card').map(card=>{
