@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>BDR TeamView v2.01</title>
+<title>BDR TeamView v.2.0 beta</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -30,9 +30,7 @@
   /* table */
   .table-wrap{overflow:auto}
   table{width:100%;border-collapse:separate;border-spacing:0 8px;table-layout:fixed}
-  thead th{position:sticky;top:0;background:var(--bg);z-index:1}
-  th{font-size:12px;color:#5b6472;text-align:left;padding:0 10px;user-select:none;cursor:pointer}
-  th.sortable:hover{opacity:.85}
+  th{font-size:12px;color:#5b6472;text-align:left;padding:0 10px}
   td{background:#fff;padding:10px;border-top:1px solid #eef2f7;border-bottom:1px solid #eef2f7;vertical-align:top}
   tr td:first-child{border-left:1px solid #eef2f7;border-radius:12px 0 0 12px}
   tr td:last-child{border-right:1px solid #eef2f7;border-radius:0 12px 12px 0}
@@ -51,7 +49,6 @@
     body{background:#fff}
     .card{box-shadow:none;border:1px solid #e5e7eb}
   }
-  .small{font-size:11px;color:#6b7280}
 </style>
 </head>
 <body>
@@ -59,7 +56,6 @@
   <header>
     <h1 id="pageTitle">TeamView</h1>
     <div class="toolbar">
-      <button class="btn" id="btnCSV">CSV 내보내기</button>
       <button class="btn" id="btnShare">공유</button>
       <button class="btn" id="btnCopy">링크 복사</button>
       <button class="btn" id="btnPrint">인쇄</button>
@@ -74,11 +70,8 @@
           <div id="teamTitle" style="font-size:18px;font-weight:700">팀 정보를 불러오는 중…</div>
           <span class="badge" id="tourNameBadge"></span>
         </div>
-        <div class="muted" id="teamSub" style="margin-top:4px">
-          Team ID: <span id="teamIdTxt" style="cursor:pointer;text-decoration:underline dotted">-</span>
-        </div>
+        <div class="muted" id="teamSub" style="margin-top:4px">Team ID: <span id="teamIdTxt"></span></div>
         <div id="jerseys" class="jersey" style="margin-top:8px"></div>
-        <div class="small" id="lastUpdated" style="margin-top:6px"></div>
       </div>
       <div>
         <div class="kvs" id="teamKVs">
@@ -104,12 +97,12 @@
       <table>
         <thead>
           <tr>
-            <th class="sortable" data-key="no" style="width:80px">등번호</th>
-            <th class="sortable" data-key="name">선수이름</th>
-            <th class="sortable col-pos" data-key="pos" style="width:100px">포지션</th>
-            <th class="sortable col-birth" data-key="birth" style="width:140px">생년월일</th>
-            <th class="sortable col-age" data-key="age" style="width:80px">만나이</th>
-            <th class="sortable col-elite" data-key="elite" style="width:100px">선출</th>
+            <th style="width:80px">등번호</th>
+            <th>선수이름</th>
+            <th class="col-pos" style="width:100px">포지션</th>
+            <th class="col-birth" style="width:140px">생년월일</th>
+            <th class="col-age" style="width:80px">만나이</th>
+            <th class="col-elite" style="width:100px">선출</th>
           </tr>
         </thead>
         <tbody id="playersTbody">
@@ -126,80 +119,29 @@
 </div>
 
 <script>
-/* =========================================================
- * BDR TeamView v2.01
- * - 병렬 로딩(Promise.all) + 재시도/타임아웃(네트워크 안정화)
- * - 안전 렌더링(esc) + 정렬(헤더 클릭) + CSV 내보내기
- * - ?appUrl=... 로 백엔드 즉시 교체 + localStorage 저장
- * ========================================================= */
-
 /* ============ 상수/설정 ============ */
 const DEFAULT_WEB_APP_URL='https://script.google.com/macros/s/AKfycbxxccpp-6Cwef-rphqjRYC-OHLmjaL8M9koCk50E4UDdKUtXEsKyEOCzP07EbmHW7CQMg/exec';
 const CONF_KEY='BDR_ADMIN_CONF_V2';
-const conf = (()=>{ try{ return JSON.parse(localStorage.getItem(CONF_KEY)||'{}'); }catch{return{};} })();
-const urlParams = new URLSearchParams(location.search);
-const overrideAppUrl = urlParams.get('appUrl');
-if (overrideAppUrl) {
-  conf.appUrl = overrideAppUrl;
-  try{ localStorage.setItem(CONF_KEY, JSON.stringify(conf)); }catch{}
-}
+const conf = (()=>{
+  try{ return JSON.parse(localStorage.getItem(CONF_KEY)||'{}'); }catch{return{};}
+})();
 function validWebAppUrl(u){ return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(\?.*)?$/i.test((u||'').trim()); }
 function apiBase(){ return validWebAppUrl(conf.appUrl)? conf.appUrl : DEFAULT_WEB_APP_URL; }
 function apiUrl(path, q={}){ const u=new URL(apiBase()); u.searchParams.set('path', path); Object.entries(q).forEach(([k,v])=>u.searchParams.set(k,v)); return u.toString(); }
-
-/* ============ 네트워크 유틸 (타임아웃 + 재시도) ============ */
-async function fetchWithTimeout(url, opt={}, timeoutMs=12000){
-  const ctrl=new AbortController();
-  const t=setTimeout(()=>ctrl.abort('timeout'), timeoutMs);
+async function getJSON(u){
   try{
-    const res=await fetch(url,{...opt,signal:ctrl.signal,cache:'no-store',mode:'cors',credentials:'omit',redirect:'follow'});
-    return res;
-  }finally{ clearTimeout(t); }
+    const r=await fetch(u,{cache:'no-store',mode:'cors',credentials:'omit',redirect:'follow'});
+    const t=await r.text(); try{ return JSON.parse(t); }catch{ return {ok:false,error:'JSON 파싱 실패', raw:t.slice(0,280)}; }
+  }catch(e){ return {ok:false,error:String(e && e.message || e)}; }
 }
 
-async function getJSON(u, retries=2){
-  let lastErr=null;
-  for (let i=0;i<=retries;i++){
-    try{
-      const r=await fetchWithTimeout(u,{},12000);
-      const text=await r.text();
-      try{
-        const data=JSON.parse(text);
-        return data;
-      }catch{
-        return {ok:false,error:'JSON 파싱 실패', raw:text.slice(0,280)};
-      }
-    }catch(e){
-      lastErr=e && e.message || String(e);
-      await new Promise(r=>setTimeout(r, 400*(i+1))); // 점증 대기
-    }
-  }
-  return {ok:false,error:lastErr||'네트워크 오류'};
-}
-
-/* ============ 공용 유틸 ============ */
+/* ============ 유틸 ============ */
 const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
-function esc(v){ return String(v??'').replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s])); }
 function phonePretty(s){ return String(s||'').replace(/\D/g,'').replace(/^(\d{3})(\d{3,4})(\d{4})$/,'$1-$2-$3'); }
-function jerseySVG(hex,label){
-  const color=(/^[#][0-9a-f]{6}$/i).test(hex||'')?hex:'#e5e7eb'; const text=(label||'').toUpperCase();
-  return `<svg width="42" height="52" viewBox="0 0 42 52" xmlns="http://www.w3.org/2000/svg" aria-label="${esc(text)}">
-    <g filter="url(#s)"><path d="M14 3 l4 6 h6 l4-6 h6 v15 l3 3 v27 a3 3 0 0 1 -3 3 h-26 a3 3 0 0 1 -3 -3 v-27 l3-3 v-15 z" fill="${color}" stroke="#cbd5e1"/>
-    <text x="21" y="31" font-family="system-ui,sans-serif" font-size="9" fill="#0f172a" text-anchor="middle" font-weight="700">${esc(text)}</text></g>
-    <defs><filter id="s" x="0" y="0" width="42" height="52"><feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000" flood-opacity=".08"/></filter></defs>
-  </svg>`;
-}
+function jerseySVG(hex,label){ const color=(/^[#][0-9a-f]{6}$/i).test(hex||'')?hex:'#e5e7eb', text=(label||'').toUpperCase(); return `<svg width="42" height="52" viewBox="0 0 42 52" xmlns="http://www.w3.org/2000/svg"><g filter="url(#s)"><path d="M14 3 l4 6 h6 l4-6 h6 v15 l3 3 v27 a3 3 0 0 1 -3 3 h-26 a3 3 0 0 1 -3 -3 v-27 l3-3 v-15 z" fill="${color}" stroke="#cbd5e1"/><text x="21" y="31" font-family="system-ui,sans-serif" font-size="9" fill="#0f172a" text-anchor="middle" font-weight="700">${text}</text></g><defs><filter id="s" x="0" y="0" width="42" height="52"><feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000" flood-opacity=".08"/></filter></defs></svg>`; }
 function qs(k){ return new URLSearchParams(location.search).get(k)||''; }
-function fmtBirth(s){
-  if(!s) return '';
-  const d=new Date(s);
-  if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-  // 숫자8자리(yyyymmdd)도 대응
-  const m=String(s).replace(/\D/g,'').match(/^(\d{4})(\d{2})(\d{2})$/);
-  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
-  return String(s);
-}
+function fmtBirth(s){ if(!s) return ''; const d=new Date(s); if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; return String(s); }
 
 /* ============ 렌더러 ============ */
 function fillKV(id, text){
@@ -221,7 +163,7 @@ function renderTeamCard(team){
   $('#pageTitle').textContent = title || 'TeamView';
   $('#teamTitle').textContent = title || '무명 팀';
   $('#tourNameBadge').textContent = team.tourName || '';
-  $('#teamIdTxt').textContent = String(team.teamId||'-');
+  $('#teamIdTxt').textContent = String(team.teamId||'');
   $('#jerseys').innerHTML = `<div class="jersey">${jerseySVG(team.uniformHome||'#e5e7eb','HOME')}${jerseySVG(team.uniformAway||'#e5e7eb','AWAY')}</div>`;
 
   const region = [team.province||'', team.city||''].join(' ').trim() || (team.region||'');
@@ -233,26 +175,6 @@ function renderTeamCard(team){
   fillKV('kvManager', mgr);
 }
 
-function normalizeRows(rows){
-  return rows.map(r=>{
-    const no = r['등번호'] ?? r.backNumber ?? '';
-    const name = r['선수이름'] ?? r.playerName ?? '';
-    const pos = (r['포지션'] ?? r.position ?? '').toString().toUpperCase();
-    const birth = fmtBirth(r['생년월일'] ?? r.birth ?? r.dob ?? '');
-    let age = r['만나이'] ?? r.age ?? '';
-    // 생년월일이 있고 나이가 없으면 계산(만나이)
-    if (!age && birth){
-      const bd = new Date(birth);
-      if(!isNaN(bd)){
-        const today = new Date();
-        age = today.getFullYear()-bd.getFullYear() - ((today.getMonth()<bd.getMonth() || (today.getMonth()===bd.getMonth() && today.getDate()<bd.getDate()))?1:0);
-      }
-    }
-    const elite = r['선출여부'] ?? r.elite ?? '';
-    return { no, name, pos, birth, age, elite };
-  });
-}
-
 function renderPlayers(rows){
   const tb = $('#playersTbody');
   if(!Array.isArray(rows) || rows.length===0){
@@ -260,84 +182,28 @@ function renderPlayers(rows){
     $('#countInfo').textContent = '0명';
     return;
   }
-  const safe = normalizeRows(rows);
-  // 기본 정렬: 등번호(숫자 우선, 공백은 맨뒤)
   const normNo = v => {
     const s = String(v||'').trim();
     const m = s.match(/^\d+$/); return m ? parseInt(s,10) : Number.MAX_SAFE_INTEGER;
   };
-  safe.sort((a,b)=> normNo(a.no) - normNo(b.no));
-
-  tb.innerHTML = safe.map(r=>(
-    `<tr>
-      <td class="ellipsis" style="font-weight:700">${esc(r.no||'-')}</td>
-      <td class="ellipsis">${esc(r.name||'')}</td>
-      <td class="col-pos ellipsis">${esc(r.pos||'')}</td>
-      <td class="col-birth ellipsis">${esc(r.birth||'')}</td>
-      <td class="col-age ellipsis">${esc(r.age||'')}</td>
-      <td class="col-elite ellipsis">${esc(r.elite||'')}</td>
-    </tr>`
-  )).join('');
-
-  $('#countInfo').textContent = `${safe.length}명`;
-  // 보관(정렬용/CSV용)
-  window.__playersData = safe;
-}
-
-/* ============ 정렬 핸들러 ============ */
-const sortState = { key:'no', dir:'asc' };
-function applySort(key){
-  const data = window.__playersData || [];
-  if(!data.length) return;
-  if(sortState.key===key){ sortState.dir = (sortState.dir==='asc'?'desc':'asc'); }
-  else { sortState.key=key; sortState.dir='asc'; }
-  const dir = sortState.dir==='asc'?1:-1;
-  const cmp = (a,b)=>{
-    const va=a[key], vb=b[key];
-    if (key==='no'){ // 숫자 우선
-      const na = /^\d+$/.test(String(va)) ? +va : Number.MAX_SAFE_INTEGER;
-      const nb = /^\d+$/.test(String(vb)) ? +vb : Number.MAX_SAFE_INTEGER;
-      if (na!==nb) return (na-nb)*dir;
-    }
-    const sa=String(va||'').toLowerCase(), sb=String(vb||'').toLowerCase();
-    if (sa<sb) return -1*dir;
-    if (sa>sb) return 1*dir;
-    return 0;
-  };
-  data.sort(cmp);
-  // 다시 렌더 (tbody만)
-  const tb = $('#playersTbody');
-  tb.innerHTML = data.map(r=>(
-    `<tr>
-      <td class="ellipsis" style="font-weight:700">${esc(r.no||'-')}</td>
-      <td class="ellipsis">${esc(r.name||'')}</td>
-      <td class="col-pos ellipsis">${esc(r.pos||'')}</td>
-      <td class="col-birth ellipsis">${esc(r.birth||'')}</td>
-      <td class="col-age ellipsis">${esc(r.age||'')}</td>
-      <td class="col-elite ellipsis">${esc(r.elite||'')}</td>
-    </tr>`
-  )).join('');
-}
-
-/* ============ CSV 내보내기 ============ */
-function toCSV(rows){
-  const header = ['등번호','선수이름','포지션','생년월일','만나이','선출'];
-  const lines = [header.join(',')].concat(
-    rows.map(r=>[r.no,r.name,r.pos,r.birth,r.age,r.elite].map(v=>{
-      const s = String(v??'');
-      // 쉼표/따옴표/개행 처리
-      if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
-      return s;
-    }).join(','))
-  );
-  return '\uFEFF' + lines.join('\n'); // UTF-8 BOM
-}
-function downloadCSV(filename, content){
-  const blob=new Blob([content],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
-  setTimeout(()=>{URL.revokeObjectURL(url); a.remove();}, 200);
+  rows.sort((a,b)=> normNo(a['등번호']||a.backNumber) - normNo(b['등번호']||b.backNumber));
+  tb.innerHTML = rows.map(r=>{
+    const no   = r['등번호']||r.backNumber||'';
+    const name = r['선수이름']||r.playerName||'';
+    const pos  = (r['포지션']||r.position||'').toUpperCase();
+    const birth= fmtBirth(r['생년월일']||r.birth||r.dob||'');
+    const age  = r['만나이']||r.age||'';
+    const elite= r['선출여부']||r.elite||'';
+    return `<tr>
+      <td class="ellipsis" style="font-weight:700">${no||'-'}</td>
+      <td class="ellipsis">${name||''}</td>
+      <td class="col-pos ellipsis">${pos||''}</td>
+      <td class="col-birth ellipsis">${birth||''}</td>
+      <td class="col-age ellipsis">${age||''}</td>
+      <td class="col-elite ellipsis">${elite||''}</td>
+    </tr>`;
+  }).join('');
+  $('#countInfo').textContent = `${rows.length}명`;
 }
 
 /* ============ 로드 ============ */
@@ -348,31 +214,22 @@ async function boot(){
     $('#errorMsg').textContent='teamId 파라미터가 필요합니다. 예) teamview.html?teamId=TMXXXXXXXX';
     return;
   }
-
-  // 병렬 요청
-  const [teamRes, plyRes] = await Promise.all([
-    getJSON(apiUrl('getteam', { teamId })),
-    getJSON(apiUrl('players', { teamId }))
-  ]);
-
-  // 팀
+  // 팀 정보
+  const teamRes = await getJSON(apiUrl('getteam', { teamId }));
   if(!(teamRes && (teamRes.ok===true || teamRes.team))){
     $('#errorCard').style.display='';
     $('#errorMsg').textContent = (teamRes && (teamRes.error||teamRes.raw)) || '팀 정보를 불러올 수 없습니다.';
   }
   renderTeamCard(teamRes && teamRes.team);
 
-  // 선수
+  // 선수 목록(정규화)
+  const plyRes = await getJSON(apiUrl('players', { teamId }));
   if(!(plyRes && Array.isArray(plyRes.rows))){
     $('#playersTbody').innerHTML = `<tr><td colspan="6" class="muted">선수명단을 불러오지 못했습니다.</td></tr>`;
     $('#countInfo').textContent = '';
   }else{
     renderPlayers(plyRes.rows);
   }
-
-  // 업데이트 시각
-  const now = new Date();
-  $('#lastUpdated').textContent = `업데이트: ${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
 /* ============ 상단 버튼 ============ */
@@ -391,30 +248,10 @@ $('#btnShare').addEventListener('click', async ()=>{
     }
   }catch(e){}
 });
-$('#btnCSV').addEventListener('click', ()=>{
-  const data = window.__playersData||[];
-  if(!data.length){ alert('내보낼 선수 명단이 없습니다.'); return; }
-  const team = $('#pageTitle').textContent || 'team';
-  const csv = toCSV(data);
-  downloadCSV(`${team}-players.csv`, csv);
-});
-
-// TeamID 클릭하면 복사
-$('#teamIdTxt').addEventListener('click', async (e)=>{
-  const id = e.target.textContent.trim();
-  if(!id) return;
-  try{ await navigator.clipboard.writeText(id); e.target.style.color='#1769ff'; setTimeout(()=>e.target.style.color='',800); }catch{}
-});
-
-/* ============ 헤더 정렬 이벤트 ============ */
-document.querySelectorAll('th.sortable').forEach(th=>{
-  th.addEventListener('click', ()=>{
-    const key = th.getAttribute('data-key');
-    if(key) applySort(key);
-  });
-});
 
 boot();
 </script>
 </body>
 </html>
+
+팀뷰어 분석
